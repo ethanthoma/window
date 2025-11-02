@@ -74,4 +74,25 @@ pub fn build(b: *std.Build) void {
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
+
+    const basic_example_mod = b.createModule(.{
+        .root_source_file = b.path("examples/basic.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    basic_example_mod.addImport("window", wl_mod);
+
+    const basic_example = b.addExecutable(.{
+        .name = "basic",
+        .root_module = basic_example_mod,
+    });
+
+    b.installArtifact(basic_example);
+
+    const run_basic = b.addRunArtifact(basic_example);
+    run_basic.step.dependOn(b.getInstallStep());
+
+    const run_basic_step = b.step("run-basic", "Run the basic example");
+    run_basic_step.dependOn(&run_basic.step);
 }

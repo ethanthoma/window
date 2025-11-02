@@ -6,7 +6,7 @@ const Registry = @import("Registry.zig");
 const wl_compositor = Registry.wl_compositor;
 
 const wl_callback = extern struct {};
-const wl_surface = extern struct {};
+pub const wl_surface = extern struct {};
 
 surface: *wl_surface,
 frame_callback: ?*wl_callback = null,

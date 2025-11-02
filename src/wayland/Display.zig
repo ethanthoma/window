@@ -12,6 +12,10 @@ extern "c" fn wl_display_dispatch_pending(*wl_display) i32;
 extern "c" fn wl_display_roundtrip(*wl_display) i32;
 extern "c" fn wl_display_get_error(*wl_display) i32;
 extern "c" fn wl_display_flush(*wl_display) i32;
+extern "c" fn wl_display_get_fd(*wl_display) i32;
+extern "c" fn wl_display_prepare_read(*wl_display) i32;
+extern "c" fn wl_display_read_events(*wl_display) i32;
+extern "c" fn wl_display_cancel_read(*wl_display) void;
 extern "c" fn wl_display_get_registry_wrapper(*wl_display) ?*wl_registry;
 
 display: *wl_display,

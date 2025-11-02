@@ -31,7 +31,13 @@ const wl_registry_listener = extern struct {
     global_remove: ?*const fn (?*anyopaque, ?*wl_registry, u32) callconv(.c) void,
 };
 
+const xdg_wm_base_listener = extern struct {
+    ping: ?*const fn (?*anyopaque, ?*xdg_wm_base, u32) callconv(.c) void,
+};
+
 extern "c" fn wl_registry_add_listener_wrapper(*wl_registry, *const wl_registry_listener, ?*anyopaque) i32;
+extern "c" fn xdg_wm_base_add_listener_wrapper(*xdg_wm_base, *const xdg_wm_base_listener, ?*anyopaque) i32;
+extern "c" fn xdg_wm_base_pong_wrapper(*xdg_wm_base, u32) void;
 extern "c" fn wl_proxy_marshal_flags(*wl_proxy, u32, ?*const wl_interface, u32, u32, ...) ?*wl_proxy;
 extern "c" fn wl_proxy_destroy(*wl_proxy) void;
 
@@ -61,6 +67,17 @@ pub fn addListener(self: *Registry) !void {
     };
 
     const result = wl_registry_add_listener_wrapper(self.registry, &listener, self);
+    if (result < 0) return error.ListenerFailed;
+}
+
+pub fn setupXdgWmBase(self: *Registry) !void {
+    const xdg_wm_base_obj = self.globals.xdg_wm_base orelse return error.XdgWmBaseNotFound;
+
+    const listener = xdg_wm_base_listener{
+        .ping = handleXdgWmBasePing,
+    };
+
+    const result = xdg_wm_base_add_listener_wrapper(xdg_wm_base_obj, &listener, xdg_wm_base_obj);
     if (result < 0) return error.ListenerFailed;
 }
 
@@ -130,6 +147,17 @@ fn handleGlobalRemove(
     _: ?*wl_registry,
     _: u32,
 ) callconv(.c) void {}
+
+fn handleXdgWmBasePing(
+    data: ?*anyopaque,
+    xdg_wm_base_obj: ?*xdg_wm_base,
+    serial: u32,
+) callconv(.c) void {
+    _ = data;
+    if (xdg_wm_base_obj) |wm_base| {
+        xdg_wm_base_pong_wrapper(wm_base, serial);
+    }
+}
 
 pub fn destroy(self: Registry) void {
     if (self.globals.compositor) |comp| wl_proxy_destroy(@ptrCast(comp));
