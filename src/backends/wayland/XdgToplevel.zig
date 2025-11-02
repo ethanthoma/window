@@ -62,7 +62,7 @@ fn handleConfigure(
     height: i32,
     _: ?*wl_array,
 ) callconv(.c) void {
-    const Window = @import("../Window.zig");
+    const Window = @import("../../Window.zig");
     const window: *Window = @ptrCast(@alignCast(data));
 
     if (width > 0) window.xdg_toplevel.width = width;
@@ -82,7 +82,7 @@ fn handleClose(
     data: ?*anyopaque,
     _: ?*xdg_toplevel,
 ) callconv(.c) void {
-    const Window = @import("../Window.zig");
+    const Window = @import("../../Window.zig");
     const window: *Window = @ptrCast(@alignCast(data));
     window.xdg_toplevel.should_close = true;
     window.pushEvent(.close);

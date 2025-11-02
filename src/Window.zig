@@ -1,12 +1,28 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Window = @This();
 
-const Display = @import("wayland/Display.zig");
-const Registry = @import("wayland/Registry.zig");
-const Surface = @import("wayland/Surface.zig");
-const XdgSurface = @import("wayland/XdgSurface.zig");
-const XdgToplevel = @import("wayland/XdgToplevel.zig");
+pub const Key = @import("Key.zig").Key;
+
+const backend = switch (builtin.os.tag) {
+    .linux => struct {
+        pub const Display = @import("backends/wayland/Display.zig");
+        pub const Registry = @import("backends/wayland/Registry.zig");
+        pub const Surface = @import("backends/wayland/Surface.zig");
+        pub const XdgSurface = @import("backends/wayland/XdgSurface.zig");
+        pub const XdgToplevel = @import("backends/wayland/XdgToplevel.zig");
+        pub const Keyboard = @import("backends/wayland/Keyboard.zig");
+    },
+    else => @compileError("Unsupported platform: only Wayland (Linux) is currently supported"),
+};
+
+const Display = backend.Display;
+const Registry = backend.Registry;
+const Surface = backend.Surface;
+const XdgSurface = backend.XdgSurface;
+const XdgToplevel = backend.XdgToplevel;
+const Keyboard = backend.Keyboard;
 
 const wl_shm = Registry.wl_shm;
 const wl_shm_pool = extern struct {};
@@ -24,6 +40,8 @@ pub const Event = union(enum) {
         width: i32,
         height: i32,
     },
+    key_press: Key,
+    key_release: Key,
 };
 
 const EventQueue = struct {
@@ -50,6 +68,7 @@ registry: Registry,
 surface: Surface,
 xdg_surface: XdgSurface,
 xdg_toplevel: XdgToplevel,
+keyboard: ?Keyboard = null,
 buffer: ?*wl_buffer = null,
 shm_pool: ?*wl_shm_pool = null,
 shm_fd: i32 = -1,
@@ -73,6 +92,10 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
     const compositor = registry.globals.compositor orelse return error.CompositorNotFound;
     const xdg_wm_base = registry.globals.xdg_wm_base orelse return error.XdgWmBaseNotFound;
     const shm = registry.globals.shm orelse return error.ShmNotFound;
+    const seat = registry.globals.seat orelse return error.SeatNotFound;
+
+    var keyboard = try Keyboard.init(seat);
+    errdefer keyboard.destroy();
 
     var surface = try Surface.init(compositor);
     errdefer surface.deinit();
@@ -101,6 +124,7 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
         .surface = surface,
         .xdg_surface = xdg_surface,
         .xdg_toplevel = xdg_toplevel,
+        .keyboard = keyboard,
         .buffer = buffer,
         .shm_pool = pool,
         .shm_fd = shm_fd,
@@ -109,6 +133,7 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
 
     try window.xdg_surface.addListener(window);
     try window.xdg_toplevel.addListener(window);
+    try window.keyboard.?.addListener(window);
 
     window.xdg_toplevel.setTitle(title);
     window.xdg_toplevel.setAppId("zig-wayland-window");
@@ -128,6 +153,7 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
 }
 
 pub fn deinit(self: *Window) void {
+    if (self.keyboard) |kb| kb.destroy();
     if (self.buffer) |buf| wl_buffer_destroy_wrapper(buf);
     if (self.shm_pool) |pool| wl_shm_pool_destroy_wrapper(pool);
     if (self.shm_fd >= 0) std.posix.close(self.shm_fd);

@@ -49,7 +49,7 @@ fn handleConfigure(
     _: ?*xdg_surface,
     serial: u32,
 ) callconv(.c) void {
-    const Window = @import("../Window.zig");
+    const Window = @import("../../Window.zig");
     const window: *Window = @ptrCast(@alignCast(data));
     window.xdg_surface.last_serial = serial;
     window.xdg_surface.configured = true;

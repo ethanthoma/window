@@ -15,6 +15,13 @@ pub fn main() !void {
             .configure => |config| {
                 std.debug.print("Configure event: {}x{}\n", .{ config.width, config.height });
             },
+            .key_press => |key| {
+                std.debug.print("Key pressed: {s}\n", .{@tagName(key)});
+                if (key == .q) should_close = true;
+            },
+            .key_release => |key| {
+                std.debug.print("Key released: {s}\n", .{@tagName(key)});
+            },
         };
 
         std.Thread.sleep(16 * std.time.ns_per_ms);

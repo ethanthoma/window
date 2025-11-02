@@ -1,12 +1,13 @@
 const std = @import("std");
 
 pub const Window = @import("Window.zig");
+pub const Key = @import("Key.zig").Key;
 
-const Display = @import("wayland/Display.zig");
-const Registry = @import("wayland/Registry.zig");
-const Surface = @import("wayland/Surface.zig");
-const XdgSurface = @import("wayland/XdgSurface.zig");
-const XdgToplevel = @import("wayland/XdgToplevel.zig");
+const Display = @import("backends/wayland/Display.zig");
+const Registry = @import("backends/wayland/Registry.zig");
+const Surface = @import("backends/wayland/Surface.zig");
+const XdgSurface = @import("backends/wayland/XdgSurface.zig");
+const XdgToplevel = @import("backends/wayland/XdgToplevel.zig");
 
 test {
     std.testing.refAllDecls(@This());

@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
     }
 
     wl_mod.addCSourceFile(.{
-        .file = b.path("src/wayland/wayland_wrapper.c"),
+        .file = b.path("src/backends/wayland/wayland_wrapper.c"),
         .flags = &.{
             "-std=c99",
             "-D_POSIX_C_SOURCE=200809L",
