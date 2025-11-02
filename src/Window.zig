@@ -236,14 +236,41 @@ pub fn pushEvent(self: *Window, event: Event) void {
 }
 
 pub fn pollEvent(self: *Window) !?Event {
-    if (self.event_index == 0) {
-        try self.display.roundtrip();
-    }
     if (self.event_index >= self.event_queue.len) {
         self.event_queue.clear();
         self.event_index = 0;
-        return null;
+
+        try self.display.dispatchPending();
+        try self.display.flush();
+
+        if (self.event_queue.len == 0) {
+            self.display.prepareRead() catch {
+                return null;
+            };
+
+            const fd = self.display.getFd();
+            var pfd = [_]std.posix.pollfd{.{
+                .fd = fd,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            }};
+
+            const result = std.posix.poll(&pfd, 16) catch |err| {
+                self.display.cancelRead();
+                return err;
+            };
+
+            if (result > 0) {
+                try self.display.readEvents();
+                try self.display.dispatchPending();
+            } else {
+                self.display.cancelRead();
+            }
+        }
+
+        if (self.event_queue.len == 0) return null;
     }
+
     const event = self.event_queue.get(self.event_index);
     self.event_index += 1;
     return event;

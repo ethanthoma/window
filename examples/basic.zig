@@ -39,8 +39,6 @@ pub fn main() !void {
             },
             else => {},
         };
-
-        std.Thread.sleep(16 * std.time.ns_per_ms);
     }
 
     std.debug.print("Window closed, exiting...\n", .{});

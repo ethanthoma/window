@@ -58,6 +58,24 @@ pub fn getRegistry(self: Display) !*wl_registry {
     return wl_display_get_registry_wrapper(self.display) orelse error.RegistryFailed;
 }
 
+pub fn getFd(self: Display) i32 {
+    return wl_display_get_fd(self.display);
+}
+
+pub fn prepareRead(self: Display) !void {
+    const result = wl_display_prepare_read(self.display);
+    if (result < 0) return error.PrepareReadFailed;
+}
+
+pub fn readEvents(self: Display) !void {
+    const result = wl_display_read_events(self.display);
+    if (result < 0) return error.ReadEventsFailed;
+}
+
+pub fn cancelRead(self: Display) void {
+    wl_display_cancel_read(self.display);
+}
+
 test "display connect and disconnect" {
     const display = connect(null) catch |err| {
         if (err == error.ConnectionFailed) {
