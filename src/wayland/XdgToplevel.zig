@@ -64,8 +64,18 @@ fn handleConfigure(
 ) callconv(.c) void {
     const Window = @import("../Window.zig");
     const window: *Window = @ptrCast(@alignCast(data));
+
     if (width > 0) window.xdg_toplevel.width = width;
     if (height > 0) window.xdg_toplevel.height = height;
+
+    if (width > 0 or height > 0) {
+        window.pushEvent(.{
+            .configure = .{
+                .width = if (width > 0) width else window.xdg_toplevel.width,
+                .height = if (height > 0) height else window.xdg_toplevel.height,
+            },
+        });
+    }
 }
 
 fn handleClose(
@@ -75,6 +85,7 @@ fn handleClose(
     const Window = @import("../Window.zig");
     const window: *Window = @ptrCast(@alignCast(data));
     window.xdg_toplevel.should_close = true;
+    window.pushEvent(.close);
 }
 
 fn handleConfigureBounds(

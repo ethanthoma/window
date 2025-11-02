@@ -18,6 +18,33 @@ extern "c" fn wl_shm_pool_destroy_wrapper(*wl_shm_pool) void;
 extern "c" fn wl_surface_attach_wrapper(*Surface.wl_surface, *wl_buffer, i32, i32) void;
 extern "c" fn wl_buffer_destroy_wrapper(*wl_buffer) void;
 
+pub const Event = union(enum) {
+    close,
+    configure: struct {
+        width: i32,
+        height: i32,
+    },
+};
+
+const EventQueue = struct {
+    events: [128]Event = undefined,
+    len: usize = 0,
+
+    fn append(self: *EventQueue, event: Event) !void {
+        if (self.len >= self.events.len) return error.QueueFull;
+        self.events[self.len] = event;
+        self.len += 1;
+    }
+
+    fn get(self: EventQueue, index: usize) Event {
+        return self.events[index];
+    }
+
+    fn clear(self: *EventQueue) void {
+        self.len = 0;
+    }
+};
+
 display: Display,
 registry: Registry,
 surface: Surface,
@@ -26,6 +53,8 @@ xdg_toplevel: XdgToplevel,
 buffer: ?*wl_buffer = null,
 shm_pool: ?*wl_shm_pool = null,
 shm_fd: i32 = -1,
+event_queue: EventQueue,
+event_index: usize = 0,
 
 pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
     const allocator = std.heap.c_allocator;
@@ -75,6 +104,7 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
         .buffer = buffer,
         .shm_pool = pool,
         .shm_fd = shm_fd,
+        .event_queue = .{},
     };
 
     try window.xdg_surface.addListener(window);
@@ -111,18 +141,30 @@ pub fn deinit(self: *Window) void {
     allocator.destroy(self);
 }
 
-pub fn shouldClose(self: Window) bool {
-    return self.xdg_toplevel.should_close;
+pub fn pushEvent(self: *Window, event: Event) void {
+    self.event_queue.append(event) catch {
+        std.debug.print("Event queue full, dropping event\n", .{});
+    };
 }
 
-pub fn pollEvents(self: *Window) !void {
-    try self.display.roundtrip();
+pub fn pollEvent(self: *Window) !?Event {
+    if (self.event_index == 0) {
+        try self.display.roundtrip();
+    }
+    if (self.event_index >= self.event_queue.len) {
+        self.event_queue.clear();
+        self.event_index = 0;
+        return null;
+    }
+    const event = self.event_queue.get(self.event_index);
+    self.event_index += 1;
+    return event;
 }
 
 test "window creation and basic lifecycle" {
     const window = Window.init("Test Window", 800, 600) catch return error.SkipZigTest;
     defer window.deinit();
 
-    try std.testing.expect(!window.shouldClose());
     try std.testing.expect(window.xdg_surface.configured);
+    try std.testing.expect(!window.xdg_toplevel.should_close);
 }
