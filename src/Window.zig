@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const Window = @This();
 
 pub const Key = @import("Key.zig").Key;
+pub const MouseButton = @import("backends/wayland/Pointer.zig").MouseButton;
 
 const backend = switch (builtin.os.tag) {
     .linux => struct {
@@ -13,6 +14,7 @@ const backend = switch (builtin.os.tag) {
         pub const XdgSurface = @import("backends/wayland/XdgSurface.zig");
         pub const XdgToplevel = @import("backends/wayland/XdgToplevel.zig");
         pub const Keyboard = @import("backends/wayland/Keyboard.zig");
+        pub const Pointer = @import("backends/wayland/Pointer.zig");
     },
     else => @compileError("Unsupported platform: only Wayland (Linux) is currently supported"),
 };
@@ -23,6 +25,7 @@ const Surface = backend.Surface;
 const XdgSurface = backend.XdgSurface;
 const XdgToplevel = backend.XdgToplevel;
 const Keyboard = backend.Keyboard;
+const Pointer = backend.Pointer;
 
 const wl_shm = Registry.wl_shm;
 const wl_shm_pool = extern struct {};
@@ -42,6 +45,21 @@ pub const Event = union(enum) {
     },
     key_press: Key,
     key_release: Key,
+    mouse_enter: struct {
+        x: f64,
+        y: f64,
+    },
+    mouse_leave,
+    mouse_motion: struct {
+        x: f64,
+        y: f64,
+    },
+    mouse_button_press: MouseButton,
+    mouse_button_release: MouseButton,
+    mouse_scroll: struct {
+        x: f64,
+        y: f64,
+    },
 };
 
 const EventQueue = struct {
@@ -69,6 +87,7 @@ surface: Surface,
 xdg_surface: XdgSurface,
 xdg_toplevel: XdgToplevel,
 keyboard: ?Keyboard = null,
+pointer: ?Pointer = null,
 buffer: ?*wl_buffer = null,
 shm_pool: ?*wl_shm_pool = null,
 shm_fd: i32 = -1,
@@ -96,6 +115,9 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
 
     var keyboard = try Keyboard.init(seat);
     errdefer keyboard.destroy();
+
+    var pointer = try Pointer.init(seat);
+    errdefer pointer.destroy();
 
     var surface = try Surface.init(compositor);
     errdefer surface.deinit();
@@ -125,6 +147,7 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
         .xdg_surface = xdg_surface,
         .xdg_toplevel = xdg_toplevel,
         .keyboard = keyboard,
+        .pointer = pointer,
         .buffer = buffer,
         .shm_pool = pool,
         .shm_fd = shm_fd,
@@ -134,6 +157,7 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
     try window.xdg_surface.addListener(window);
     try window.xdg_toplevel.addListener(window);
     try window.keyboard.?.addListener(window);
+    try window.pointer.?.addListener(window);
 
     window.xdg_toplevel.setTitle(title);
     window.xdg_toplevel.setAppId("zig-wayland-window");
@@ -154,6 +178,7 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
 
 pub fn deinit(self: *Window) void {
     if (self.keyboard) |kb| kb.destroy();
+    if (self.pointer) |ptr| ptr.destroy();
     if (self.buffer) |buf| wl_buffer_destroy_wrapper(buf);
     if (self.shm_pool) |pool| wl_shm_pool_destroy_wrapper(pool);
     if (self.shm_fd >= 0) std.posix.close(self.shm_fd);

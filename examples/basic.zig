@@ -22,6 +22,22 @@ pub fn main() !void {
             .key_release => |key| {
                 std.debug.print("Key released: {s}\n", .{@tagName(key)});
             },
+            .mouse_enter => |pos| {
+                std.debug.print("Mouse entered at ({d:.1}, {d:.1})\n", .{ pos.x, pos.y });
+            },
+            .mouse_leave => {
+                std.debug.print("Mouse left window\n", .{});
+            },
+            .mouse_button_press => |button| {
+                std.debug.print("Mouse button pressed: {s}\n", .{@tagName(button)});
+            },
+            .mouse_button_release => |button| {
+                std.debug.print("Mouse button released: {s}\n", .{@tagName(button)});
+            },
+            .mouse_scroll => |delta| {
+                std.debug.print("Mouse scroll: ({d:.1}, {d:.1})\n", .{ delta.x, delta.y });
+            },
+            else => {},
         };
 
         std.Thread.sleep(16 * std.time.ns_per_ms);
