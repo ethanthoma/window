@@ -69,10 +69,20 @@ fn handleConfigure(
     if (height > 0) window.xdg_toplevel.height = height;
 
     if (width > 0 or height > 0) {
+        const new_width = if (width > 0) width else window.xdg_toplevel.width;
+        const new_height = if (height > 0) height else window.xdg_toplevel.height;
+
+        if (window.xdg_surface.configured and window.buffer != null) {
+            window.resize(new_width, new_height) catch |err| {
+                std.debug.print("Failed to resize window: {}\n", .{err});
+                return;
+            };
+        }
+
         window.pushEvent(.{
             .configure = .{
-                .width = if (width > 0) width else window.xdg_toplevel.width,
-                .height = if (height > 0) height else window.xdg_toplevel.height,
+                .width = new_width,
+                .height = new_height,
             },
         });
     }

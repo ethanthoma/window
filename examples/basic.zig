@@ -13,7 +13,7 @@ pub fn main() !void {
         while (try window.pollEvent()) |event| switch (event) {
             .close => should_close = true,
             .configure => |config| {
-                std.debug.print("Configure event: {}x{}\n", .{ config.width, config.height });
+                std.debug.print("Window resized to: {}x{}\n", .{ config.width, config.height });
             },
             .key_press => |key| {
                 std.debug.print("Key pressed: {s}\n", .{@tagName(key)});

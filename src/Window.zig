@@ -88,6 +88,8 @@ xdg_surface: XdgSurface,
 xdg_toplevel: XdgToplevel,
 keyboard: ?Keyboard = null,
 pointer: ?Pointer = null,
+width: i32,
+height: i32,
 buffer: ?*wl_buffer = null,
 shm_pool: ?*wl_shm_pool = null,
 shm_fd: i32 = -1,
@@ -148,6 +150,8 @@ pub fn init(title: [*:0]const u8, width: i32, height: i32) !*Window {
         .xdg_toplevel = xdg_toplevel,
         .keyboard = keyboard,
         .pointer = pointer,
+        .width = width,
+        .height = height,
         .buffer = buffer,
         .shm_pool = pool,
         .shm_fd = shm_fd,
@@ -190,6 +194,39 @@ pub fn deinit(self: *Window) void {
 
     const allocator = std.heap.c_allocator;
     allocator.destroy(self);
+}
+
+pub fn resize(self: *Window, new_width: i32, new_height: i32) !void {
+    if (new_width == self.width and new_height == self.height) return;
+    if (new_width <= 0 or new_height <= 0) return;
+
+    if (self.buffer) |buf| wl_buffer_destroy_wrapper(buf);
+    if (self.shm_pool) |pool| wl_shm_pool_destroy_wrapper(pool);
+    if (self.shm_fd >= 0) std.posix.close(self.shm_fd);
+
+    const stride = new_width * 4;
+    const size = stride * new_height;
+
+    const shm_fd = try std.posix.memfd_create("wl_shm", 0);
+    errdefer std.posix.close(shm_fd);
+
+    try std.posix.ftruncate(shm_fd, @intCast(size));
+
+    const shm = self.registry.globals.shm orelse return error.ShmNotFound;
+    const pool = wl_shm_create_pool_wrapper(shm, shm_fd, size) orelse return error.ShmPoolCreationFailed;
+    errdefer wl_shm_pool_destroy_wrapper(pool);
+
+    const buffer = wl_shm_pool_create_buffer_wrapper(pool, 0, new_width, new_height, stride, 0) orelse return error.BufferCreationFailed;
+
+    self.buffer = buffer;
+    self.shm_pool = pool;
+    self.shm_fd = shm_fd;
+    self.width = new_width;
+    self.height = new_height;
+
+    wl_surface_attach_wrapper(self.surface.surface, buffer, 0, 0);
+    self.surface.damage(0, 0, new_width, new_height);
+    self.surface.commit();
 }
 
 pub fn pushEvent(self: *Window, event: Event) void {
