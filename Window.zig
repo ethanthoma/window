@@ -14,7 +14,6 @@ const MAX_EVENTS = 64;
 
 backend: Backend,
 
-// Event queue — filled by pollEvents, drained by nextEvent.
 event_queue: [MAX_EVENTS]InputEvent = undefined,
 event_read: usize = 0,
 event_write: usize = 0,
@@ -29,6 +28,9 @@ const Backend = switch (builtin.target.os.tag) {
 pub const InitOptions = shared.InitOptions;
 pub const Size = shared.Size;
 pub const NativeHandles = shared.NativeHandles;
+pub const ClickEvent = shared.ClickEvent;
+pub const Key = @import("key.zig").Key;
+pub const MouseButton = @import("mouse_button.zig").MouseButton;
 
 pub fn init(options: InitOptions) !Window {
     return .{ .backend = try Backend.init(options) };
@@ -56,8 +58,6 @@ pub fn pollEvents(self: *Window) void {
     self.backend.pollEvents(self);
 }
 
-/// Pull the next input event from the queue. Returns null when drained.
-/// Call pollEvents() first to fill the queue.
 pub fn nextEvent(self: *Window) ?InputEvent {
     if (self.event_read >= self.event_write) return null;
     const event = self.event_queue[self.event_read % MAX_EVENTS];
@@ -65,7 +65,6 @@ pub fn nextEvent(self: *Window) ?InputEvent {
     return event;
 }
 
-/// Push an event to the queue. Called by platform backends during pollEvents.
 pub fn pushEvent(self: *Window, event: InputEvent) void {
     if (self.event_write - self.event_read >= MAX_EVENTS) return;
     self.event_queue[self.event_write % MAX_EVENTS] = event;
@@ -92,23 +91,18 @@ pub fn clearResize(self: *Window) void {
     self.backend.clearResize();
 }
 
-pub fn getMousePosition(self: *Window) struct { x: f32, y: f32 } {
-    return .{ .x = self.backend.mouse_x, .y = self.backend.mouse_y };
+pub fn getMousePosition(self: *Window) shared.MousePosition {
+    return self.backend.getMousePosition();
 }
 
 pub fn getMouseButtons(self: *Window) u8 {
-    return self.backend.mouse_buttons;
+    return self.backend.getMouseButtons();
 }
 
-pub const ClickEvent = shared.ClickEvent;
-
-pub const Key = @import("key.zig").Key;
-pub const MouseButton = @import("mouse_button.zig").MouseButton;
-
 pub fn isKeyPressed(self: *Window, key: Key) bool {
-    return self.backend.keys_pressed.contains(key);
+    return self.backend.isKeyPressed(key);
 }
 
 pub fn getKeysPressed(self: *Window) std.EnumSet(Key) {
-    return self.backend.keys_pressed;
+    return self.backend.getKeysPressed();
 }

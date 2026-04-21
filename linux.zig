@@ -450,3 +450,19 @@ pub fn clearResize(self: *LinuxWindow) void {
     self.width = self.new_width;
     self.height = self.new_height;
 }
+
+pub fn getMousePosition(self: *LinuxWindow) shared.MousePosition {
+    return .{ .x = self.mouse_x, .y = self.mouse_y };
+}
+
+pub fn getMouseButtons(self: *LinuxWindow) u8 {
+    return self.mouse_buttons;
+}
+
+pub fn isKeyPressed(self: *LinuxWindow, key: Key) bool {
+    return self.keys_pressed.contains(key);
+}
+
+pub fn getKeysPressed(self: *LinuxWindow) std.EnumSet(Key) {
+    return self.keys_pressed;
+}

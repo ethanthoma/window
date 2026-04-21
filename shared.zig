@@ -38,3 +38,8 @@ pub const ClickEvent = struct {
     y: f32,
     button: u8,
 };
+
+pub const MousePosition = struct {
+    x: f32,
+    y: f32,
+};
