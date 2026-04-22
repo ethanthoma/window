@@ -23,11 +23,11 @@ const CGSize = extern struct { width: CGFloat, height: CGFloat };
 const CGRect = extern struct { origin: CGPoint, size: CGSize };
 
 fn sel(name: [*:0]const u8) SEL {
-    return c.sel_registerName(name);
+    return c.sel_registerName(name) orelse unreachable;
 }
 
 fn cls(name: [*:0]const u8) Class {
-    return c.objc_getClass(name).?;
+    return c.objc_getClass(name) orelse unreachable;
 }
 
 fn msg(target: anytype, sel_name: [*:0]const u8, args: anytype) id {
