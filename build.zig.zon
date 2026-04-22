@@ -3,7 +3,12 @@
     .version = "0.1.0",
     .fingerprint = 0x8be4f9dd86152916,
     .minimum_zig_version = "0.15.2",
-    .dependencies = .{},
+    .dependencies = .{
+        .zig_objc = .{
+            .url = "https://github.com/mitchellh/zig-objc/archive/f356ed02833f0f1b8e84d50bed9e807bf7cdc0ae.tar.gz",
+            .hash = "zig_objc-0.0.0-Ir_Sp5gTAQCvxxR7oVIrPXxXwsfKgVP7_wqoOQrZjFeK",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

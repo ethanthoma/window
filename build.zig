@@ -13,6 +13,19 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .linux) {
         setupLinux(b, window_module, target);
     }
+
+    if (target.result.os.tag == .macos) {
+        setupMacOS(b, window_module);
+    }
+}
+
+fn setupMacOS(b: *std.Build, module: *std.Build.Module) void {
+    const objc_dep = b.dependency("zig_objc", .{});
+    module.addImport("objc", objc_dep.module("objc"));
+
+    module.linkFramework("AppKit", .{});
+    module.linkFramework("QuartzCore", .{});
+    module.linkFramework("Metal", .{});
 }
 
 fn setupLinux(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
