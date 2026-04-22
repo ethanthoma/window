@@ -20,9 +20,13 @@ pub fn build(b: *std.Build) void {
 }
 
 fn setupMacOS(b: *std.Build, module: *std.Build.Module) void {
-    const objc_dep = b.dependency("zig_objc", .{});
-    module.addImport("objc", objc_dep.module("objc"));
+    if (b.graph.env_map.get("MACOS_SDK_PATH")) |sdk_path| {
+        module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk_path}) });
+        module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk_path}) });
+        module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sdk_path}) });
+    }
 
+    module.linkSystemLibrary("objc", .{});
     module.linkFramework("AppKit", .{});
     module.linkFramework("QuartzCore", .{});
     module.linkFramework("Metal", .{});
