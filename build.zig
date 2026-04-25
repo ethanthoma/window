@@ -43,15 +43,26 @@ fn setupMacOS(b: *std.Build, module: *std.Build.Module) void {
 }
 
 fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
+    const wayland_protocols = b.graph.env_map.get("WAYLAND_PROTOCOLS_DIR") orelse
+        @panic("WAYLAND_PROTOCOLS_DIR not set");
+    const xdg_shell_xml = b.fmt("{s}/stable/xdg-shell/xdg-shell.xml", .{wayland_protocols});
+
+    const gen_header = b.addSystemCommand(&.{ "wayland-scanner", "client-header", xdg_shell_xml });
+    const xdg_shell_h = gen_header.addOutputFileArg("xdg-shell.h");
+
+    const gen_code = b.addSystemCommand(&.{ "wayland-scanner", "private-code", xdg_shell_xml });
+    const xdg_shell_c = gen_code.addOutputFileArg("xdg-shell-protocol.c");
+
     module.addCSourceFile(.{
         .file = b.path("src/wayland/wayland_wrapper.c"),
         .flags = &.{"-std=c11"},
     });
     module.addCSourceFile(.{
-        .file = b.path("src/wayland/xdg-shell-protocol.c"),
+        .file = xdg_shell_c,
         .flags = &.{"-std=c11"},
     });
 
+    module.addIncludePath(xdg_shell_h.dirname());
     module.addIncludePath(b.path("src/wayland"));
     module.link_libc = true;
 
