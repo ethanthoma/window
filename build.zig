@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) void {
     const window_module = b.addModule("window", .{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("main.zig"),
+        .root_source_file = b.path("src/main.zig"),
     });
 
     if (target.result.os.tag == .linux) {
@@ -44,15 +44,15 @@ fn setupMacOS(b: *std.Build, module: *std.Build.Module) void {
 
 fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
     module.addCSourceFile(.{
-        .file = b.path("wayland/wayland_wrapper.c"),
+        .file = b.path("src/wayland/wayland_wrapper.c"),
         .flags = &.{"-std=c11"},
     });
     module.addCSourceFile(.{
-        .file = b.path("wayland/xdg-shell-protocol.c"),
+        .file = b.path("src/wayland/xdg-shell-protocol.c"),
         .flags = &.{"-std=c11"},
     });
 
-    module.addIncludePath(b.path("wayland"));
+    module.addIncludePath(b.path("src/wayland"));
     module.link_libc = true;
 
     module.linkSystemLibrary("wayland-client", .{ .use_pkg_config = .force });

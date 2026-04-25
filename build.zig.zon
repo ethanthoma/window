@@ -7,14 +7,6 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "main.zig",
-        "Window.zig",
-        "shared.zig",
-        "key.zig",
-        "mouse_button.zig",
-        "linux.zig",
-        "macos.zig",
-        "windows.zig",
-        "wayland",
+        "src",
     },
 }
