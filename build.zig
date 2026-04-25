@@ -54,7 +54,7 @@ fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
     const xdg_shell_c = gen_code.addOutputFileArg("xdg-shell-protocol.c");
 
     module.addCSourceFile(.{
-        .file = b.path("src/wayland/wayland_wrapper.c"),
+        .file = b.path("src/wayland_wrapper.c"),
         .flags = &.{"-std=c11"},
     });
     module.addCSourceFile(.{
@@ -63,7 +63,7 @@ fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
     });
 
     module.addIncludePath(xdg_shell_h.dirname());
-    module.addIncludePath(b.path("src/wayland"));
+    module.addIncludePath(b.path("src"));
     module.link_libc = true;
 
     module.linkSystemLibrary("wayland-client", .{ .use_pkg_config = .force });
