@@ -1,4 +1,5 @@
 const std = @import("std");
+const Scanner = @import("wayland").Scanner;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -43,31 +44,29 @@ fn setupMacOS(b: *std.Build, module: *std.Build.Module) void {
 }
 
 fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
-    const wayland_protocols = b.graph.env_map.get("WAYLAND_PROTOCOLS_DIR") orelse
-        @panic("WAYLAND_PROTOCOLS_DIR not set");
-    const xdg_shell_xml = b.fmt("{s}/stable/xdg-shell/xdg-shell.xml", .{wayland_protocols});
+    const wayland_xml: ?std.Build.LazyPath = if (b.graph.env_map.get("WAYLAND_XML")) |p|
+        .{ .cwd_relative = p }
+    else
+        null;
+    const wayland_protocols: ?std.Build.LazyPath = if (b.graph.env_map.get("WAYLAND_PROTOCOLS_DIR")) |p|
+        .{ .cwd_relative = p }
+    else
+        null;
 
-    const gen_header = b.addSystemCommand(&.{ "wayland-scanner", "client-header", xdg_shell_xml });
-    const xdg_shell_h = gen_header.addOutputFileArg("xdg-shell.h");
-
-    const gen_code = b.addSystemCommand(&.{ "wayland-scanner", "private-code", xdg_shell_xml });
-    const xdg_shell_c = gen_code.addOutputFileArg("xdg-shell-protocol.c");
-
-    module.addCSourceFile(.{
-        .file = b.path("src/wayland_wrapper.c"),
-        .flags = &.{"-std=c11"},
+    const scanner = Scanner.create(b, .{
+        .wayland_xml = wayland_xml,
+        .wayland_protocols = wayland_protocols,
     });
-    module.addCSourceFile(.{
-        .file = xdg_shell_c,
-        .flags = &.{"-std=c11"},
-    });
+    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+    scanner.generate("wl_compositor", 4);
+    scanner.generate("wl_seat", 7);
+    scanner.generate("xdg_wm_base", 4);
 
-    module.addIncludePath(xdg_shell_h.dirname());
-    module.addIncludePath(b.path("src"));
+    const wayland = b.createModule(.{ .root_source_file = scanner.result });
+    module.addImport("wayland", wayland);
+
     module.link_libc = true;
-
     module.linkSystemLibrary("wayland-client", .{ .use_pkg_config = .force });
-    module.linkSystemLibrary("wayland-egl", .{ .use_pkg_config = .force });
     module.linkSystemLibrary("xkbcommon", .{ .use_pkg_config = .force });
     module.linkSystemLibrary("x11", .{ .use_pkg_config = .force });
 }
