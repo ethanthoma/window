@@ -345,4 +345,127 @@ pub const Key = enum {
             else => .unknown,
         };
     }
+
+    pub fn fromWindowsVKey(vk: u32) Key {
+        return switch (vk) {
+            // Letters
+            0x41 => .a,
+            0x42 => .b,
+            0x43 => .c,
+            0x44 => .d,
+            0x45 => .e,
+            0x46 => .f,
+            0x47 => .g,
+            0x48 => .h,
+            0x49 => .i,
+            0x4A => .j,
+            0x4B => .k,
+            0x4C => .l,
+            0x4D => .m,
+            0x4E => .n,
+            0x4F => .o,
+            0x50 => .p,
+            0x51 => .q,
+            0x52 => .r,
+            0x53 => .s,
+            0x54 => .t,
+            0x55 => .u,
+            0x56 => .v,
+            0x57 => .w,
+            0x58 => .x,
+            0x59 => .y,
+            0x5A => .z,
+
+            // Numbers (top row)
+            0x30 => .@"0",
+            0x31 => .@"1",
+            0x32 => .@"2",
+            0x33 => .@"3",
+            0x34 => .@"4",
+            0x35 => .@"5",
+            0x36 => .@"6",
+            0x37 => .@"7",
+            0x38 => .@"8",
+            0x39 => .@"9",
+
+            // Function keys
+            0x70 => .f1,
+            0x71 => .f2,
+            0x72 => .f3,
+            0x73 => .f4,
+            0x74 => .f5,
+            0x75 => .f6,
+            0x76 => .f7,
+            0x77 => .f8,
+            0x78 => .f9,
+            0x79 => .f10,
+            0x7A => .f11,
+            0x7B => .f12,
+
+            // Special keys
+            0x1B => .escape,
+            0x0D => .enter,
+            0x09 => .tab,
+            0x08 => .backspace,
+            0x20 => .space,
+            0xBD => .minus,
+            0xBB => .equals,
+            0xDB => .left_bracket,
+            0xDD => .right_bracket,
+            0xDC => .backslash,
+            0xBA => .semicolon,
+            0xDE => .apostrophe,
+            0xC0 => .grave,
+            0xBC => .comma,
+            0xBE => .period,
+            0xBF => .slash,
+            0x14 => .caps_lock,
+
+            // Arrows
+            0x26 => .up,
+            0x28 => .down,
+            0x25 => .left,
+            0x27 => .right,
+
+            // Modifiers (generic — windows.zig decodeKey resolves L/R)
+            0x10 => .left_shift,
+            0x11 => .left_control,
+            0x12 => .left_alt,
+            0x5B => .left_super,
+            0x5C => .right_super,
+
+            // Navigation
+            0x2D => .insert,
+            0x2E => .delete,
+            0x24 => .home,
+            0x23 => .end,
+            0x21 => .page_up,
+            0x22 => .page_down,
+
+            // Keypad
+            0x60 => .kp_0,
+            0x61 => .kp_1,
+            0x62 => .kp_2,
+            0x63 => .kp_3,
+            0x64 => .kp_4,
+            0x65 => .kp_5,
+            0x66 => .kp_6,
+            0x67 => .kp_7,
+            0x68 => .kp_8,
+            0x69 => .kp_9,
+            0x6E => .kp_decimal,
+            0x6F => .kp_divide,
+            0x6A => .kp_multiply,
+            0x6D => .kp_subtract,
+            0x6B => .kp_add,
+
+            // System
+            0x2C => .print_screen,
+            0x91 => .scroll_lock,
+            0x13 => .pause,
+            0x5D => .menu,
+
+            else => .unknown,
+        };
+    }
 };
