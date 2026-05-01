@@ -8,6 +8,8 @@ const c = @cImport({
     @cInclude("objc/message.h");
 });
 
+extern fn MTLCreateSystemDefaultDevice() ?*anyopaque;
+
 const MacOSWindow = @This();
 
 const id = *anyopaque;
@@ -30,40 +32,80 @@ fn cls(name: [*:0]const u8) Class {
     return c.objc_getClass(name) orelse unreachable;
 }
 
+// Casting objc_msgSend to a variadic fn pointer breaks on Apple ARM64:
+// variadic args are passed on the stack, but objc_msgSend's resolved IMP
+// expects them in registers (x2-x7 for ints/pointers, d0-d7 for floats,
+// HFA layout for NSRect). Build a non-variadic fn type per call from the
+// args tuple so the regular AAPCS64 register convention is used.
+inline fn objcCall(comptime Ret: type, target: anytype, sel_name: [*:0]const u8, args: anytype) Ret {
+    const args_info = @typeInfo(@TypeOf(args)).@"struct";
+    const FnType = comptime fn_ty: {
+        var params: [2 + args_info.fields.len]std.builtin.Type.Fn.Param = undefined;
+        params[0] = .{ .is_generic = false, .is_noalias = false, .type = id };
+        params[1] = .{ .is_generic = false, .is_noalias = false, .type = SEL };
+        for (args_info.fields, 0..) |f, i| {
+            params[2 + i] = .{ .is_generic = false, .is_noalias = false, .type = f.type };
+        }
+        break :fn_ty @Type(.{ .@"fn" = .{
+            .calling_convention = .c,
+            .is_generic = false,
+            .is_var_args = false,
+            .return_type = Ret,
+            .params = &params,
+        } });
+    };
+
+    const f: *const FnType = @ptrCast(&c.objc_msgSend);
+    return @call(.auto, f, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+}
+
 fn msg(target: anytype, sel_name: [*:0]const u8, args: anytype) id {
-    const func: *const fn (id, SEL, ...) callconv(.c) id = @ptrCast(&c.objc_msgSend);
-    return @call(.auto, func, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+    return objcCall(id, target, sel_name, args);
 }
 
 fn msgVoid(target: anytype, sel_name: [*:0]const u8, args: anytype) void {
-    const func: *const fn (id, SEL, ...) callconv(.c) void = @ptrCast(&c.objc_msgSend);
-    @call(.auto, func, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+    return objcCall(void, target, sel_name, args);
 }
 
 fn msgBool(target: anytype, sel_name: [*:0]const u8, args: anytype) BOOL {
-    const func: *const fn (id, SEL, ...) callconv(.c) BOOL = @ptrCast(&c.objc_msgSend);
-    return @call(.auto, func, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+    return objcCall(BOOL, target, sel_name, args);
 }
 
 fn msgU16(target: anytype, sel_name: [*:0]const u8, args: anytype) u16 {
-    const func: *const fn (id, SEL, ...) callconv(.c) u16 = @ptrCast(&c.objc_msgSend);
-    return @call(.auto, func, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+    return objcCall(u16, target, sel_name, args);
 }
 
 fn msgU64(target: anytype, sel_name: [*:0]const u8, args: anytype) u64 {
-    const func: *const fn (id, SEL, ...) callconv(.c) u64 = @ptrCast(&c.objc_msgSend);
-    return @call(.auto, func, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+    return objcCall(u64, target, sel_name, args);
 }
 
-fn msgRect(target: anytype, sel_name: [*:0]const u8, args: anytype) CGRect {
-    // On x86_64, stret is used for structs > 16 bytes. On ARM64, regular msgSend works.
-    const func: *const fn (id, SEL, ...) callconv(.c) CGRect = @ptrCast(&c.objc_msgSend);
-    return @call(.auto, func, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+// Struct args/returns must use non-variadic typed signatures. On ARM64 Darwin,
+// objc_msgSend's variadic ABI puts struct args on the stack but the method
+// expects them in float registers (d0-d3 for NSRect). Variadic returns
+// have similar issues. Use typed wrappers for any selector touching CGRect/CGPoint.
+
+fn msgFrame(target: id) CGRect {
+    const Fn = *const fn (id, SEL) callconv(.c) CGRect;
+    const f: Fn = @ptrCast(&c.objc_msgSend);
+    return f(target, sel("frame"));
 }
 
-fn msgPoint(target: anytype, sel_name: [*:0]const u8, args: anytype) CGPoint {
-    const func: *const fn (id, SEL, ...) callconv(.c) CGPoint = @ptrCast(&c.objc_msgSend);
-    return @call(.auto, func, .{ @as(id, @ptrCast(target)), sel(sel_name) } ++ args);
+fn msgContentRectForFrameRect(target: id, frame: CGRect) CGRect {
+    const Fn = *const fn (id, SEL, CGRect) callconv(.c) CGRect;
+    const f: Fn = @ptrCast(&c.objc_msgSend);
+    return f(target, sel("contentRectForFrameRect:"), frame);
+}
+
+fn msgLocationInWindow(event: id) CGPoint {
+    const Fn = *const fn (id, SEL) callconv(.c) CGPoint;
+    const f: Fn = @ptrCast(&c.objc_msgSend);
+    return f(event, sel("locationInWindow"));
+}
+
+fn msgInitWindow(alloc: id, rect: CGRect, style: u64, backing: u64, defer_flag: BOOL) id {
+    const Fn = *const fn (id, SEL, CGRect, u64, u64, BOOL) callconv(.c) id;
+    const f: Fn = @ptrCast(&c.objc_msgSend);
+    return f(alloc, sel("initWithContentRect:styleMask:backing:defer:"), rect, style, backing, defer_flag);
 }
 
 width: u32,
@@ -98,21 +140,29 @@ pub fn init(options: shared.InitOptions) !MacOSWindow {
         .size = .{ .width = @floatFromInt(options.width), .height = @floatFromInt(options.height) },
     };
 
-    const window = msg(alloc, "initWithContentRect:styleMask:backing:defer:", .{
-        rect,
-        style_mask,
-        @as(u64, 2), // NSBackingStoreBuffered
-        NO,
-    });
+    const window = msgInitWindow(alloc, rect, style_mask, 2, NO);
 
     const title_str = msg(cls("NSString"), "stringWithUTF8String:", .{options.title});
     msgVoid(window, "setTitle:", .{title_str});
 
     const content_view = msg(window, "contentView", .{});
-    msgVoid(content_view, "setWantsLayer:", .{YES});
 
-    const layer = msg(cls("CAMetalLayer"), "layer", .{});
+    // Layer-hosting NSView: set layer BEFORE wantsLayer (Apple docs).
+    // Reverse order makes it layer-backed with an AppKit-owned plain
+    // CALayer, which wgpu rejects when initializing the Metal surface.
+    // Use alloc/init (not +[CAMetalLayer layer]) — the latter is
+    // autoreleased and can disappear before wgpu's surface holds it.
+    const layer_alloc = msg(cls("CAMetalLayer"), "alloc", .{});
+    const layer = msg(layer_alloc, "init", .{});
+
+    // Set Metal device on the layer. Some wgpu-native versions reject
+    // surfaces from a CAMetalLayer that has no device assigned yet.
+    if (MTLCreateSystemDefaultDevice()) |metal_device| {
+        msgVoid(layer, "setDevice:", .{@as(id, @ptrCast(metal_device))});
+    }
+
     msgVoid(content_view, "setLayer:", .{layer});
+    msgVoid(content_view, "setWantsLayer:", .{YES});
 
     msgVoid(window, "setAcceptsMouseMovedEvents:", .{YES});
 
@@ -201,8 +251,8 @@ pub fn pollEvents(self: *MacOSWindow, window: *Window) void {
     }
 
     // Check resize.
-    const frame = msgRect(self.ns_window, "frame", .{});
-    const content = msgRect(self.ns_window, "contentRectForFrameRect:", .{frame});
+    const frame = msgFrame(self.ns_window);
+    const content = msgContentRectForFrameRect(self.ns_window, frame);
     const new_w: u32 = @intFromFloat(@max(1.0, content.size.width));
     const new_h: u32 = @intFromFloat(@max(1.0, content.size.height));
     if (new_w != self.width or new_h != self.height) {
@@ -213,7 +263,7 @@ pub fn pollEvents(self: *MacOSWindow, window: *Window) void {
 }
 
 fn updateMouseFromEvent(self: *MacOSWindow, event: id) void {
-    const loc = msgPoint(event, "locationInWindow", .{});
+    const loc = msgLocationInWindow(event);
     self.mouse_x = @floatCast(loc.x);
     self.mouse_y = @as(f32, @floatFromInt(self.height)) - @as(f32, @floatCast(loc.y));
 }
