@@ -68,6 +68,7 @@ const EventQueue = struct {
 display: *wl.Display,
 registry: *wl.Registry,
 compositor: *wl.Compositor,
+shm: *wl.Shm,
 seat: *wl.Seat,
 wm_base: *xdg.WmBase,
 surface: *wl.Surface,
@@ -75,6 +76,10 @@ xdg_surface: *xdg.Surface,
 xdg_toplevel: *xdg.Toplevel,
 keyboard: ?*wl.Keyboard = null,
 pointer: ?*wl.Pointer = null,
+
+cursor_theme: ?*wl.CursorTheme = null,
+cursor_surface: ?*wl.Surface = null,
+cursor_image: ?*wl.CursorImage = null,
 
 xkb_context: ?*CXkbContext = null,
 xkb_keymap: ?*CXkbKeymap = null,
@@ -103,9 +108,12 @@ keys_pressed: std.EnumSet(Key) = std.EnumSet(Key).initEmpty(),
 
 const Globals = struct {
     compositor: ?*wl.Compositor = null,
+    shm: ?*wl.Shm = null,
     seat: ?*wl.Seat = null,
     wm_base: ?*xdg.WmBase = null,
 };
+
+const CURSOR_SIZE: i32 = 24;
 
 pub fn init(options: shared.InitOptions) !Wayland {
     const display = try wl.Display.connect(null);
@@ -120,6 +128,8 @@ pub fn init(options: shared.InitOptions) !Wayland {
 
     const compositor = globals.compositor orelse return error.CompositorNotFound;
     errdefer compositor.destroy();
+    const shm = globals.shm orelse return error.ShmNotFound;
+    errdefer shm.destroy();
     const seat = globals.seat orelse return error.SeatNotFound;
     errdefer seat.destroy();
     const wm_base = globals.wm_base orelse return error.XdgWmBaseNotFound;
@@ -151,10 +161,30 @@ pub fn init(options: shared.InitOptions) !Wayland {
     xdg_toplevel.setTitle(options.title);
     xdg_toplevel.setAppId("zig-wayland-window");
 
+    var cursor_theme: ?*wl.CursorTheme = null;
+    var cursor_surface: ?*wl.Surface = null;
+    var cursor_image: ?*wl.CursorImage = null;
+    if (wl.CursorTheme.load(null, CURSOR_SIZE, shm)) |theme| {
+        if (theme.getCursor("left_ptr")) |cursor| {
+            if (cursor.image_count > 0) {
+                cursor_theme = theme;
+                cursor_image = cursor.images[0];
+                cursor_surface = compositor.createSurface() catch null;
+            } else {
+                theme.destroy();
+            }
+        } else {
+            theme.destroy();
+        }
+    } else |_| {}
+    errdefer if (cursor_theme) |t| t.destroy();
+    errdefer if (cursor_surface) |s| s.destroy();
+
     var self = Wayland{
         .display = display,
         .registry = registry,
         .compositor = compositor,
+        .shm = shm,
         .seat = seat,
         .wm_base = wm_base,
         .surface = surface,
@@ -163,6 +193,9 @@ pub fn init(options: shared.InitOptions) !Wayland {
         .keyboard = keyboard,
         .pointer = pointer,
         .xkb_context = xkb_context,
+        .cursor_theme = cursor_theme,
+        .cursor_surface = cursor_surface,
+        .cursor_image = cursor_image,
         .width = options.width,
         .height = options.height,
         .mouse_x = @as(f32, @floatFromInt(options.width)) / 2.0,
@@ -201,6 +234,8 @@ pub fn deinit(self: *Wayland) void {
     if (self.xkb_state) |s| xkb_state_unref(s);
     if (self.xkb_keymap) |k| xkb_keymap_unref(k);
     if (self.xkb_context) |c| xkb_context_unref(c);
+    if (self.cursor_surface) |s| s.destroy();
+    if (self.cursor_theme) |t| t.destroy();
     if (self.keyboard) |kb| kb.destroy();
     if (self.pointer) |p| p.destroy();
     self.xdg_toplevel.destroy();
@@ -208,6 +243,7 @@ pub fn deinit(self: *Wayland) void {
     self.surface.destroy();
     self.wm_base.destroy();
     self.seat.destroy();
+    self.shm.destroy();
     self.compositor.destroy();
     self.registry.destroy();
     self.display.disconnect();
@@ -396,6 +432,8 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *
         .global => |g| {
             if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
                 globals.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, 4)) catch return;
+            } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
+                globals.shm = registry.bind(g.name, wl.Shm, @min(g.version, 1)) catch return;
             } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq) {
                 globals.seat = registry.bind(g.name, wl.Seat, @min(g.version, 7)) catch return;
             } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
@@ -483,13 +521,24 @@ fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Wayland) v
     }
 }
 
-fn pointerListener(_: *wl.Pointer, event: wl.Pointer.Event, self: *Wayland) void {
+fn applyCursor(self: *Wayland, pointer: *wl.Pointer, serial: u32) void {
+    const surface = self.cursor_surface orelse return;
+    const image = self.cursor_image orelse return;
+    const buffer = image.getBuffer() catch return;
+    pointer.setCursor(serial, surface, @intCast(image.hotspot_x), @intCast(image.hotspot_y));
+    surface.attach(buffer, 0, 0);
+    surface.damageBuffer(0, 0, @intCast(image.width), @intCast(image.height));
+    surface.commit();
+}
+
+fn pointerListener(pointer: *wl.Pointer, event: wl.Pointer.Event, self: *Wayland) void {
     switch (event) {
         .enter => |e| {
             const x = e.surface_x.toDouble();
             const y = e.surface_y.toDouble();
             self.pointer_x = x;
             self.pointer_y = y;
+            applyCursor(self, pointer, e.serial);
             self.pushEvent(.{ .mouse_enter = .{ .x = x, .y = y } });
         },
         .leave => self.pushEvent(.mouse_leave),

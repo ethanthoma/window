@@ -59,6 +59,7 @@ fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
     });
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.generate("wl_compositor", 4);
+    scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 7);
     scanner.generate("xdg_wm_base", 4);
 
@@ -67,6 +68,7 @@ fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
 
     module.link_libc = true;
     module.linkSystemLibrary("wayland-client", .{ .use_pkg_config = .force });
+    module.linkSystemLibrary("wayland-cursor", .{ .use_pkg_config = .force });
     module.linkSystemLibrary("xkbcommon", .{ .use_pkg_config = .force });
     module.linkSystemLibrary("x11", .{ .use_pkg_config = .force });
 }

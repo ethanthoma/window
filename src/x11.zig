@@ -6,6 +6,7 @@ const MouseButton = @import("mouse_button.zig").MouseButton;
 const x11 = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
+    @cInclude("X11/cursorfont.h");
 });
 
 const X11 = @This();
@@ -58,6 +59,9 @@ pub fn init(options: shared.InitOptions) !X11 {
         window_handle,
         x11.ExposureMask | x11.KeyPressMask | x11.KeyReleaseMask | x11.ButtonPressMask | x11.ButtonReleaseMask | x11.PointerMotionMask | x11.StructureNotifyMask,
     );
+
+    const arrow = x11.XCreateFontCursor(display, x11.XC_left_ptr);
+    if (arrow != 0) _ = x11.XDefineCursor(display, window_handle, arrow);
 
     _ = x11.XSync(display, 0);
 
