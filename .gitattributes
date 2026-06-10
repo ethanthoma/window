@@ -1,0 +1,3 @@
+*.lock -diff linguist-generated=true
+*-lock.json -diff linguist-generated=true
+*-lock.yaml -diff linguist-generated=true
