@@ -1,9 +1,16 @@
 *
 !*/
 
-!.gitignore
-!.gitattributes
-!README.md
+# git stuff
+!/.gitignore
+!/.gitattributes
+!/README.md
 
-!*.zig
-!*.zon
+# zig proj
+!src/**/*.zig
+!/build.zig
+!/build.zig.zon
+
+# dev env
+!/flake.nix
+!/flake.lock
