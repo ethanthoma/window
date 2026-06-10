@@ -32,14 +32,3 @@ pub const NativeHandles = union(enum) {
     win32: Win32Handles,
     metal: MetalLayer,
 };
-
-pub const ClickEvent = struct {
-    x: f32,
-    y: f32,
-    button: u8,
-};
-
-pub const MousePosition = struct {
-    x: f32,
-    y: f32,
-};

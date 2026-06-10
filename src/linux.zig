@@ -2,7 +2,7 @@ const std = @import("std");
 const shared = @import("shared.zig");
 const Wayland = @import("wayland.zig");
 const X11 = @import("x11.zig");
-const Key = @import("key.zig").Key;
+const Window = @import("Window.zig");
 
 const LinuxWindow = @This();
 
@@ -12,10 +12,10 @@ backend: union(enum) {
 },
 
 pub fn init(options: shared.InitOptions) !LinuxWindow {
-    if (std.posix.getenv("WAYLAND_DISPLAY")) |val| if (val.len != 0) {
+    if (std.c.getenv("WAYLAND_DISPLAY")) |val| if (val[0] != 0) {
         return .{ .backend = .{ .wayland = try Wayland.init(options) } };
     };
-    if (std.posix.getenv("DISPLAY")) |_| {
+    if (std.c.getenv("DISPLAY")) |_| {
         return .{ .backend = .{ .x11 = try X11.init(options) } };
     }
     return error.NoDisplayServerFound;
@@ -39,13 +39,7 @@ pub fn show(self: *LinuxWindow) void {
     }
 }
 
-pub fn shouldClose(self: *LinuxWindow) bool {
-    return switch (self.backend) {
-        inline else => |*b| b.shouldClose(),
-    };
-}
-
-pub fn pollEvents(self: *LinuxWindow, window: anytype) void {
+pub fn pollEvents(self: *LinuxWindow, window: *Window) void {
     switch (self.backend) {
         inline else => |*b| b.pollEvents(window),
     }
@@ -60,47 +54,5 @@ pub fn getNativeHandles(self: *LinuxWindow) shared.NativeHandles {
 pub fn getSize(self: *LinuxWindow) shared.Size {
     return switch (self.backend) {
         inline else => |*b| b.getSize(),
-    };
-}
-
-pub fn needsResize(self: *LinuxWindow) bool {
-    return switch (self.backend) {
-        inline else => |*b| b.needsResize(),
-    };
-}
-
-pub fn getNewSize(self: *LinuxWindow) shared.Size {
-    return switch (self.backend) {
-        inline else => |*b| b.getNewSize(),
-    };
-}
-
-pub fn clearResize(self: *LinuxWindow) void {
-    switch (self.backend) {
-        inline else => |*b| b.clearResize(),
-    }
-}
-
-pub fn getMousePosition(self: *LinuxWindow) shared.MousePosition {
-    return switch (self.backend) {
-        inline else => |*b| b.getMousePosition(),
-    };
-}
-
-pub fn getMouseButtons(self: *LinuxWindow) u8 {
-    return switch (self.backend) {
-        inline else => |*b| b.getMouseButtons(),
-    };
-}
-
-pub fn isKeyPressed(self: *LinuxWindow, key: Key) bool {
-    return switch (self.backend) {
-        inline else => |*b| b.isKeyPressed(key),
-    };
-}
-
-pub fn getKeysPressed(self: *LinuxWindow) std.EnumSet(Key) {
-    return switch (self.backend) {
-        inline else => |*b| b.getKeysPressed(),
     };
 }

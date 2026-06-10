@@ -1,6 +1,7 @@
 # window
 
-Minimal cross-platform windowing for Zig. Single-file backend per platform.
+Minimal cross-platform windowing for Zig (0.16.0+). Single-file backend per
+platform.
 
 ## Platforms
 
@@ -56,12 +57,27 @@ pub fn main() !void {
     while (!win.shouldClose()) {
         win.pollEvents();
         while (win.nextEvent()) |event| switch (event) {
-            .key_press => |k| if (k == .escape) return,
+            .key => |k| if (k.key == .escape and k.action == .press) return,
             else => {},
         };
     }
 }
 ```
+
+## Events
+
+Everything arrives through one queue, drained with `nextEvent()` after each
+`pollEvents()`:
+
+`close`, `resize`, `key`, `mouse_button`, `mouse_move`, `mouse_scroll`,
+`mouse_enter`, `mouse_leave`
+
+Key and mouse button events carry an `action` (`.press`/`.release`). Held keys
+do not repeat. Scroll deltas are positive scrolling down/right.
+
+Polled state derived from the same events: `shouldClose()`,
+`getMousePosition()`, `getMouseButtons()`, `isKeyPressed()`, `getKeysPressed()`,
+plus `getSize()` from the backend.
 
 ## Build dependencies
 

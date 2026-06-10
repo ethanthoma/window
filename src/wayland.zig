@@ -2,6 +2,7 @@ const std = @import("std");
 const shared = @import("shared.zig");
 const Key = @import("key.zig").Key;
 const MouseButton = @import("mouse_button.zig").MouseButton;
+const Window = @import("Window.zig");
 
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
@@ -33,38 +34,6 @@ pub const PointerButton = enum(u32) {
     _,
 };
 
-pub const Event = union(enum) {
-    close,
-    configure: struct { width: i32, height: i32 },
-    key_press: Key,
-    key_release: Key,
-    mouse_enter: struct { x: f64, y: f64 },
-    mouse_leave,
-    mouse_motion: struct { x: f64, y: f64 },
-    mouse_button_press: PointerButton,
-    mouse_button_release: PointerButton,
-    mouse_scroll: struct { x: f64, y: f64 },
-};
-
-const EventQueue = struct {
-    events: [128]Event = undefined,
-    len: usize = 0,
-
-    fn append(self: *EventQueue, event: Event) !void {
-        if (self.len >= self.events.len) return error.QueueFull;
-        self.events[self.len] = event;
-        self.len += 1;
-    }
-
-    fn get(self: EventQueue, index: usize) Event {
-        return self.events[index];
-    }
-
-    fn clear(self: *EventQueue) void {
-        self.len = 0;
-    }
-};
-
 display: *wl.Display,
 registry: *wl.Registry,
 compositor: *wl.Compositor,
@@ -85,26 +54,19 @@ xkb_context: ?*CXkbContext = null,
 xkb_keymap: ?*CXkbKeymap = null,
 xkb_state: ?*CXkbState = null,
 
-event_queue: EventQueue = .{},
-event_index: usize = 0,
+window: ?*Window = null,
 
 configured: bool = false,
 last_configure_serial: u32 = 0,
-should_close: bool = false,
 
 width: u32,
 height: u32,
-needs_resize: bool = false,
-new_width: u32 = 0,
-new_height: u32 = 0,
+pending_width: u32 = 0,
+pending_height: u32 = 0,
+pending_resize: bool = false,
 
-mouse_x: f32 = 0,
-mouse_y: f32 = 0,
-mouse_buttons: u8 = 0,
 pointer_x: f64 = 0,
 pointer_y: f64 = 0,
-
-keys_pressed: std.EnumSet(Key) = std.EnumSet(Key).initEmpty(),
 
 const Globals = struct {
     compositor: ?*wl.Compositor = null,
@@ -180,7 +142,9 @@ pub fn init(options: shared.InitOptions) !Wayland {
     errdefer if (cursor_theme) |t| t.destroy();
     errdefer if (cursor_surface) |s| s.destroy();
 
-    var self = Wayland{
+    std.debug.print("Using native Wayland backend\n", .{});
+
+    return .{
         .display = display,
         .registry = registry,
         .compositor = compositor,
@@ -198,19 +162,7 @@ pub fn init(options: shared.InitOptions) !Wayland {
         .cursor_image = cursor_image,
         .width = options.width,
         .height = options.height,
-        .mouse_x = @as(f32, @floatFromInt(options.width)) / 2.0,
-        .mouse_y = @as(f32, @floatFromInt(options.height)) / 2.0,
     };
-
-    pollEventsInternal(&self, null);
-    if (self.needs_resize) {
-        self.width = self.new_width;
-        self.height = self.new_height;
-        self.needs_resize = false;
-    }
-
-    std.debug.print("Using native Wayland backend\n", .{});
-    return self;
 }
 
 pub fn start(self: *Wayland) !void {
@@ -228,6 +180,12 @@ pub fn start(self: *Wayland) !void {
 
     self.surface.commit();
     if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+
+    if (self.pending_resize) {
+        self.pending_resize = false;
+        self.width = self.pending_width;
+        self.height = self.pending_height;
+    }
 }
 
 pub fn deinit(self: *Wayland) void {
@@ -251,136 +209,35 @@ pub fn deinit(self: *Wayland) void {
 
 pub fn show(_: *Wayland) void {}
 
-pub fn shouldClose(self: *Wayland) bool {
-    return self.should_close;
-}
+pub fn pollEvents(self: *Wayland, window: *Window) void {
+    self.window = window;
+    defer self.window = null;
 
-pub fn pushEvent(self: *Wayland, event: Event) void {
-    self.event_queue.append(event) catch {
-        std.debug.print("Event queue full, dropping event\n", .{});
-    };
-}
+    if (self.display.dispatchPending() != .SUCCESS) return;
+    if (self.display.flush() != .SUCCESS) return;
 
-fn pollEvent(self: *Wayland) !?Event {
-    if (self.event_index >= self.event_queue.len) {
-        self.event_queue.clear();
-        self.event_index = 0;
-
-        if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
-        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
-
-        if (self.event_queue.len == 0) {
-            if (!self.display.prepareRead()) {
-                if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
-                if (self.event_queue.len == 0) return null;
-            } else {
-                const fd = self.display.getFd();
-                var pfd = [_]std.posix.pollfd{.{
-                    .fd = fd,
-                    .events = std.posix.POLL.IN,
-                    .revents = 0,
-                }};
-
-                const result = std.posix.poll(&pfd, 0) catch |err| {
-                    self.display.cancelRead();
-                    return err;
-                };
-
-                if (result > 0) {
-                    if (self.display.readEvents() != .SUCCESS) return error.ReadEventsFailed;
-                    if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
-                } else {
-                    self.display.cancelRead();
-                }
-            }
+    if (self.display.prepareRead()) {
+        var pfd = [_]std.posix.pollfd{.{
+            .fd = self.display.getFd(),
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = std.posix.poll(&pfd, 0) catch 0;
+        if (ready > 0) {
+            _ = self.display.readEvents();
+        } else {
+            self.display.cancelRead();
         }
-
-        if (self.event_queue.len == 0) return null;
+        if (self.display.dispatchPending() != .SUCCESS) return;
     }
 
-    const event = self.event_queue.get(self.event_index);
-    self.event_index += 1;
-    return event;
-}
-
-pub fn pollEvents(self: *Wayland, window_wrapper: ?*anyopaque) void {
-    pollEventsInternal(self, window_wrapper);
-}
-
-fn pollEventsInternal(self: *Wayland, window_wrapper: ?*anyopaque) void {
-    var events_polled: u32 = 0;
-    const max_events_per_frame: u32 = 10;
-
-    while (events_polled < max_events_per_frame) {
-        const event = self.pollEvent() catch null orelse break;
-        events_polled += 1;
-
-        if (event == .key_press) {
-            if (self.keys_pressed.contains(event.key_press)) continue;
+    if (self.pending_resize) {
+        self.pending_resize = false;
+        if (self.pending_width != self.width or self.pending_height != self.height) {
+            self.width = self.pending_width;
+            self.height = self.pending_height;
+            window.pushEvent(.{ .resize = .{ .width = self.width, .height = self.height } });
         }
-        switch (event) {
-            .configure => |config| {
-                if (config.width > 0 and config.height > 0) {
-                    const new_w: u32 = @intCast(config.width);
-                    const new_h: u32 = @intCast(config.height);
-                    if (new_w != self.width or new_h != self.height) {
-                        self.new_width = new_w;
-                        self.new_height = new_h;
-                        self.needs_resize = true;
-                    }
-                }
-            },
-            .mouse_motion => |motion| {
-                self.mouse_x = @floatCast(motion.x);
-                self.mouse_y = @floatCast(motion.y);
-            },
-            .mouse_button_press => |button| {
-                const button_bit: u8 = switch (button) {
-                    .left => @intFromEnum(MouseButton.left),
-                    .right => @intFromEnum(MouseButton.right),
-                    .middle => @intFromEnum(MouseButton.middle),
-                    else => 0x00,
-                };
-                self.mouse_buttons |= button_bit;
-
-                const click_x: f32 = @floatCast(self.pointer_x);
-                const click_y: f32 = @floatCast(self.pointer_y);
-                self.mouse_x = click_x;
-                self.mouse_y = click_y;
-
-                dispatchInputEvent(window_wrapper, .{ .mouse_click = .{
-                    .x = click_x,
-                    .y = click_y,
-                    .button = button_bit,
-                } });
-            },
-            .mouse_button_release => |button| {
-                const button_bit: u8 = switch (button) {
-                    .left => @intFromEnum(MouseButton.left),
-                    .right => @intFromEnum(MouseButton.right),
-                    .middle => @intFromEnum(MouseButton.middle),
-                    else => 0x00,
-                };
-                self.mouse_buttons &= ~button_bit;
-            },
-            .key_press => |key| {
-                self.keys_pressed.insert(key);
-                dispatchInputEvent(window_wrapper, .{ .key_press = key });
-            },
-            .key_release => |key| {
-                self.keys_pressed.remove(key);
-                dispatchInputEvent(window_wrapper, .{ .key_release = key });
-            },
-            else => {},
-        }
-    }
-}
-
-fn dispatchInputEvent(window_wrapper: ?*anyopaque, event: @import("Window.zig").InputEvent) void {
-    if (window_wrapper) |wrapper| {
-        const Window = @import("Window.zig");
-        const win: *Window = @ptrCast(@alignCast(wrapper));
-        win.pushEvent(event);
     }
 }
 
@@ -395,36 +252,6 @@ pub fn getNativeHandles(self: *Wayland) shared.NativeHandles {
 
 pub fn getSize(self: *Wayland) shared.Size {
     return .{ .width = self.width, .height = self.height };
-}
-
-pub fn needsResize(self: *Wayland) bool {
-    return self.needs_resize;
-}
-
-pub fn getNewSize(self: *Wayland) shared.Size {
-    return .{ .width = self.new_width, .height = self.new_height };
-}
-
-pub fn clearResize(self: *Wayland) void {
-    self.needs_resize = false;
-    self.width = self.new_width;
-    self.height = self.new_height;
-}
-
-pub fn getMousePosition(self: *Wayland) shared.MousePosition {
-    return .{ .x = self.mouse_x, .y = self.mouse_y };
-}
-
-pub fn getMouseButtons(self: *Wayland) u8 {
-    return self.mouse_buttons;
-}
-
-pub fn isKeyPressed(self: *Wayland, key: Key) bool {
-    return self.keys_pressed.contains(key);
-}
-
-pub fn getKeysPressed(self: *Wayland) std.EnumSet(Key) {
-    return self.keys_pressed;
 }
 
 fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *Globals) void {
@@ -463,16 +290,12 @@ fn xdgSurfaceListener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event, self:
 fn xdgToplevelListener(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Wayland) void {
     switch (event) {
         .configure => |c| {
-            if (c.width > 0 or c.height > 0) {
-                const new_width = if (c.width > 0) c.width else @as(i32, @intCast(self.width));
-                const new_height = if (c.height > 0) c.height else @as(i32, @intCast(self.height));
-                self.pushEvent(.{ .configure = .{ .width = new_width, .height = new_height } });
-            }
+            if (c.width <= 0 and c.height <= 0) return;
+            self.pending_width = if (c.width > 0) @intCast(c.width) else self.width;
+            self.pending_height = if (c.height > 0) @intCast(c.height) else self.height;
+            self.pending_resize = true;
         },
-        .close => {
-            self.should_close = true;
-            self.pushEvent(.close);
-        },
+        .close => if (self.window) |w| w.pushEvent(.close),
         .configure_bounds => {},
     }
 }
@@ -480,13 +303,13 @@ fn xdgToplevelListener(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Wayla
 fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Wayland) void {
     switch (event) {
         .keymap => |k| {
-            defer std.posix.close(k.fd);
+            defer _ = std.c.close(k.fd);
             if (k.format != .xkb_v1) return;
 
             const map_shm = std.posix.mmap(
                 null,
                 k.size,
-                std.posix.PROT.READ,
+                .{ .READ = true },
                 .{ .TYPE = .PRIVATE },
                 k.fd,
                 0,
@@ -505,12 +328,13 @@ fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Wayland) v
             self.xkb_state = state;
         },
         .key => |k| {
+            const win = self.window orelse return;
             const xkb_st = self.xkb_state orelse return;
-            const keycode = k.key + 8;
-            const keysym = xkb_state_key_get_one_sym(xkb_st, keycode);
-            const key_enum = Key.fromKeysym(keysym);
-            const pressed = k.state == .pressed;
-            self.pushEvent(if (pressed) .{ .key_press = key_enum } else .{ .key_release = key_enum });
+            const keysym = xkb_state_key_get_one_sym(xkb_st, k.key + 8);
+            win.pushEvent(.{ .key = .{
+                .key = Key.fromKeysym(keysym),
+                .action = if (k.state == .pressed) .press else .release,
+            } });
         },
         .modifiers => |m| {
             if (self.xkb_state) |state| {
@@ -534,34 +358,44 @@ fn applyCursor(self: *Wayland, pointer: *wl.Pointer, serial: u32) void {
 fn pointerListener(pointer: *wl.Pointer, event: wl.Pointer.Event, self: *Wayland) void {
     switch (event) {
         .enter => |e| {
-            const x = e.surface_x.toDouble();
-            const y = e.surface_y.toDouble();
-            self.pointer_x = x;
-            self.pointer_y = y;
+            self.pointer_x = e.surface_x.toDouble();
+            self.pointer_y = e.surface_y.toDouble();
             applyCursor(self, pointer, e.serial);
-            self.pushEvent(.{ .mouse_enter = .{ .x = x, .y = y } });
+            if (self.window) |w| w.pushEvent(.{ .mouse_enter = .{
+                .x = @floatCast(self.pointer_x),
+                .y = @floatCast(self.pointer_y),
+            } });
         },
-        .leave => self.pushEvent(.mouse_leave),
+        .leave => if (self.window) |w| w.pushEvent(.mouse_leave),
         .motion => |m| {
-            const x = m.surface_x.toDouble();
-            const y = m.surface_y.toDouble();
-            self.pointer_x = x;
-            self.pointer_y = y;
-            self.pushEvent(.{ .mouse_motion = .{ .x = x, .y = y } });
+            self.pointer_x = m.surface_x.toDouble();
+            self.pointer_y = m.surface_y.toDouble();
+            if (self.window) |w| w.pushEvent(.{ .mouse_move = .{
+                .x = @floatCast(self.pointer_x),
+                .y = @floatCast(self.pointer_y),
+            } });
         },
         .button => |b| {
-            const mouse_button: PointerButton = @enumFromInt(b.button);
-            const pressed = b.state == .pressed;
-            self.pushEvent(if (pressed)
-                .{ .mouse_button_press = mouse_button }
-            else
-                .{ .mouse_button_release = mouse_button });
+            const win = self.window orelse return;
+            const button: MouseButton = switch (@as(PointerButton, @enumFromInt(b.button))) {
+                .left => .left,
+                .right => .right,
+                .middle => .middle,
+                else => return,
+            };
+            win.pushEvent(.{ .mouse_button = .{
+                .button = button,
+                .action = if (b.state == .pressed) .press else .release,
+                .x = @floatCast(self.pointer_x),
+                .y = @floatCast(self.pointer_y),
+            } });
         },
         .axis => |a| {
-            const delta = a.value.toDouble();
+            const win = self.window orelse return;
+            const delta: f32 = @floatCast(a.value.toDouble());
             switch (a.axis) {
-                .horizontal_scroll => self.pushEvent(.{ .mouse_scroll = .{ .x = delta, .y = 0 } }),
-                .vertical_scroll => self.pushEvent(.{ .mouse_scroll = .{ .x = 0, .y = delta } }),
+                .horizontal_scroll => win.pushEvent(.{ .mouse_scroll = .{ .dx = delta, .dy = 0 } }),
+                .vertical_scroll => win.pushEvent(.{ .mouse_scroll = .{ .dx = 0, .dy = delta } }),
                 _ => {},
             }
         },

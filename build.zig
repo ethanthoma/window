@@ -22,6 +22,9 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .windows) {
         setupWindows(window_module);
     }
+
+    const check = b.addTest(.{ .root_module = window_module });
+    b.step("check", "Compile-check the library").dependOn(&check.step);
 }
 
 fn setupWindows(module: *std.Build.Module) void {
@@ -31,7 +34,7 @@ fn setupWindows(module: *std.Build.Module) void {
 }
 
 fn setupMacOS(b: *std.Build, module: *std.Build.Module) void {
-    if (b.graph.env_map.get("MACOS_SDK_PATH")) |sdk_path| {
+    if (b.graph.environ_map.get("MACOS_SDK_PATH")) |sdk_path| {
         module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk_path}) });
         module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk_path}) });
         module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sdk_path}) });
@@ -44,11 +47,11 @@ fn setupMacOS(b: *std.Build, module: *std.Build.Module) void {
 }
 
 fn setupLinux(b: *std.Build, module: *std.Build.Module) void {
-    const wayland_xml: ?std.Build.LazyPath = if (b.graph.env_map.get("WAYLAND_XML")) |p|
+    const wayland_xml: ?std.Build.LazyPath = if (b.graph.environ_map.get("WAYLAND_XML")) |p|
         .{ .cwd_relative = p }
     else
         null;
-    const wayland_protocols: ?std.Build.LazyPath = if (b.graph.env_map.get("WAYLAND_PROTOCOLS_DIR")) |p|
+    const wayland_protocols: ?std.Build.LazyPath = if (b.graph.environ_map.get("WAYLAND_PROTOCOLS_DIR")) |p|
         .{ .cwd_relative = p }
     else
         null;

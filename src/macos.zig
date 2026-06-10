@@ -1,6 +1,7 @@
 const std = @import("std");
 const shared = @import("shared.zig");
 const Key = @import("key.zig").Key;
+const MouseButton = @import("mouse_button.zig").MouseButton;
 const Window = @import("Window.zig");
 
 const c = @cImport({
@@ -40,19 +41,14 @@ fn cls(name: [*:0]const u8) Class {
 inline fn objcCall(comptime Ret: type, target: anytype, sel_name: [*:0]const u8, args: anytype) Ret {
     const args_info = @typeInfo(@TypeOf(args)).@"struct";
     const FnType = comptime fn_ty: {
-        var params: [2 + args_info.fields.len]std.builtin.Type.Fn.Param = undefined;
-        params[0] = .{ .is_generic = false, .is_noalias = false, .type = id };
-        params[1] = .{ .is_generic = false, .is_noalias = false, .type = SEL };
+        var param_types: [2 + args_info.fields.len]type = undefined;
+        param_types[0] = id;
+        param_types[1] = SEL;
         for (args_info.fields, 0..) |f, i| {
-            params[2 + i] = .{ .is_generic = false, .is_noalias = false, .type = f.type };
+            param_types[2 + i] = f.type;
         }
-        break :fn_ty @Type(.{ .@"fn" = .{
-            .calling_convention = .c,
-            .is_generic = false,
-            .is_var_args = false,
-            .return_type = Ret,
-            .params = &params,
-        } });
+        const param_attrs = [_]std.builtin.Type.Fn.Param.Attributes{.{}} ** param_types.len;
+        break :fn_ty @Fn(&param_types, &param_attrs, Ret, .{ .@"callconv" = .c });
     };
 
     const f: *const FnType = @ptrCast(&c.objc_msgSend);
@@ -77,6 +73,10 @@ fn msgU16(target: anytype, sel_name: [*:0]const u8, args: anytype) u16 {
 
 fn msgU64(target: anytype, sel_name: [*:0]const u8, args: anytype) u64 {
     return objcCall(u64, target, sel_name, args);
+}
+
+fn msgF64(target: anytype, sel_name: [*:0]const u8, args: anytype) f64 {
+    return objcCall(f64, target, sel_name, args);
 }
 
 // Struct args/returns must use non-variadic typed signatures. On ARM64 Darwin,
@@ -110,15 +110,8 @@ fn msgInitWindow(alloc: id, rect: CGRect, style: u64, backing: u64, defer_flag: 
 
 width: u32,
 height: u32,
-needs_resize: bool = false,
-new_width: u32 = 0,
-new_height: u32 = 0,
-should_close_flag: bool = false,
-
-mouse_x: f32 = 0,
-mouse_y: f32 = 0,
-mouse_buttons: u8 = 0,
-keys_pressed: std.EnumSet(Key) = std.EnumSet(Key).initEmpty(),
+close_pushed: bool = false,
+modifier_keys: std.EnumSet(Key) = std.EnumSet(Key).initEmpty(),
 
 ns_app: id,
 ns_window: id,
@@ -169,8 +162,6 @@ pub fn init(options: shared.InitOptions) !MacOSWindow {
     return .{
         .width = options.width,
         .height = options.height,
-        .mouse_x = @as(f32, @floatFromInt(options.width)) / 2.0,
-        .mouse_y = @as(f32, @floatFromInt(options.height)) / 2.0,
         .ns_app = app,
         .ns_window = window,
         .metal_layer = layer,
@@ -188,8 +179,17 @@ pub fn show(self: *MacOSWindow) void {
     msgVoid(self.ns_app, "activateIgnoringOtherApps:", .{YES});
 }
 
-pub fn shouldClose(self: *MacOSWindow) bool {
-    return self.should_close_flag;
+fn mouseLocation(self: *MacOSWindow, event: id) Window.Position {
+    const loc = msgLocationInWindow(event);
+    return .{
+        .x = @floatCast(loc.x),
+        .y = @as(f32, @floatFromInt(self.height)) - @as(f32, @floatCast(loc.y)),
+    };
+}
+
+fn pushButton(self: *MacOSWindow, window: *Window, event: id, button: MouseButton, action: Window.Action) void {
+    const pos = self.mouseLocation(event);
+    window.pushEvent(.{ .mouse_button = .{ .button = button, .action = action, .x = pos.x, .y = pos.y } });
 }
 
 pub fn pollEvents(self: *MacOSWindow, window: *Window) void {
@@ -209,36 +209,36 @@ pub fn pollEvents(self: *MacOSWindow, window: *Window) void {
         const event_type = msgU64(event_or_null, "type", .{});
 
         switch (event_type) {
-            1 => { // NSEventTypeLeftMouseDown
-                self.mouse_buttons |= @intFromEnum(Window.MouseButton.left);
-                updateMouseFromEvent(self, event_or_null);
-                window.pushEvent(.{ .mouse_click = .{ .x = self.mouse_x, .y = self.mouse_y, .button = @intFromEnum(Window.MouseButton.left) } });
+            1 => self.pushButton(window, event_or_null, .left, .press), // NSEventTypeLeftMouseDown
+            2 => self.pushButton(window, event_or_null, .left, .release),
+            3 => self.pushButton(window, event_or_null, .right, .press), // NSEventTypeRightMouseDown
+            4 => self.pushButton(window, event_or_null, .right, .release),
+            25, 26 => { // NSEventTypeOtherMouseDown/Up
+                if (msgU64(event_or_null, "buttonNumber", .{}) == 2) {
+                    self.pushButton(window, event_or_null, .middle, if (event_type == 25) .press else .release);
+                }
             },
-            2 => self.mouse_buttons &= ~@intFromEnum(Window.MouseButton.left),
-            3 => { // NSEventTypeRightMouseDown
-                self.mouse_buttons |= @intFromEnum(Window.MouseButton.right);
-                updateMouseFromEvent(self, event_or_null);
-                window.pushEvent(.{ .mouse_click = .{ .x = self.mouse_x, .y = self.mouse_y, .button = @intFromEnum(Window.MouseButton.right) } });
+            5, 6, 7, 27 => { // moved + left/right/other dragged
+                const pos = self.mouseLocation(event_or_null);
+                window.pushEvent(.{ .mouse_move = pos });
             },
-            4 => self.mouse_buttons &= ~@intFromEnum(Window.MouseButton.right),
-            5, 6, 27 => updateMouseFromEvent(self, event_or_null),
             10 => { // NSEventTypeKeyDown
                 const keycode = msgU16(event_or_null, "keyCode", .{});
-                const key = Key.fromMacKeyCode(keycode);
-                if (key != .unknown and !self.keys_pressed.contains(key)) {
-                    self.keys_pressed.insert(key);
-                    window.pushEvent(.{ .key_press = key });
-                }
+                window.pushEvent(.{ .key = .{ .key = Key.fromMacKeyCode(keycode), .action = .press } });
             },
             11 => { // NSEventTypeKeyUp
                 const keycode = msgU16(event_or_null, "keyCode", .{});
-                const key = Key.fromMacKeyCode(keycode);
-                if (key != .unknown) {
-                    self.keys_pressed.remove(key);
-                    window.pushEvent(.{ .key_release = key });
-                }
+                window.pushEvent(.{ .key = .{ .key = Key.fromMacKeyCode(keycode), .action = .release } });
             },
             12 => handleModifierFlags(self, event_or_null, window),
+            22 => { // NSEventTypeScrollWheel
+                const dx = msgF64(event_or_null, "scrollingDeltaX", .{});
+                const dy = msgF64(event_or_null, "scrollingDeltaY", .{});
+                window.pushEvent(.{ .mouse_scroll = .{
+                    .dx = -@as(f32, @floatCast(dx)),
+                    .dy = -@as(f32, @floatCast(dy)),
+                } });
+            },
             else => {},
         }
 
@@ -246,8 +246,9 @@ pub fn pollEvents(self: *MacOSWindow, window: *Window) void {
     }
 
     // Check window visibility (close detection).
-    if (msgBool(self.ns_window, "isVisible", .{}) == NO) {
-        self.should_close_flag = true;
+    if (msgBool(self.ns_window, "isVisible", .{}) == NO and !self.close_pushed) {
+        self.close_pushed = true;
+        window.pushEvent(.close);
     }
 
     // Check resize.
@@ -256,16 +257,10 @@ pub fn pollEvents(self: *MacOSWindow, window: *Window) void {
     const new_w: u32 = @intFromFloat(@max(1.0, content.size.width));
     const new_h: u32 = @intFromFloat(@max(1.0, content.size.height));
     if (new_w != self.width or new_h != self.height) {
-        self.new_width = new_w;
-        self.new_height = new_h;
-        self.needs_resize = true;
+        self.width = new_w;
+        self.height = new_h;
+        window.pushEvent(.{ .resize = .{ .width = new_w, .height = new_h } });
     }
-}
-
-fn updateMouseFromEvent(self: *MacOSWindow, event: id) void {
-    const loc = msgLocationInWindow(event);
-    self.mouse_x = @floatCast(loc.x);
-    self.mouse_y = @as(f32, @floatFromInt(self.height)) - @as(f32, @floatCast(loc.y));
 }
 
 fn handleModifierFlags(self: *MacOSWindow, event: id, window: *Window) void {
@@ -278,13 +273,13 @@ fn handleModifierFlags(self: *MacOSWindow, event: id, window: *Window) void {
     };
     for (pairs) |p| {
         const pressed = (flags & p.mask) != 0;
-        const was_pressed = self.keys_pressed.contains(p.key);
+        const was_pressed = self.modifier_keys.contains(p.key);
         if (pressed and !was_pressed) {
-            self.keys_pressed.insert(p.key);
-            window.pushEvent(.{ .key_press = p.key });
+            self.modifier_keys.insert(p.key);
+            window.pushEvent(.{ .key = .{ .key = p.key, .action = .press } });
         } else if (!pressed and was_pressed) {
-            self.keys_pressed.remove(p.key);
-            window.pushEvent(.{ .key_release = p.key });
+            self.modifier_keys.remove(p.key);
+            window.pushEvent(.{ .key = .{ .key = p.key, .action = .release } });
         }
     }
 }
@@ -295,34 +290,4 @@ pub fn getNativeHandles(self: *MacOSWindow) shared.NativeHandles {
 
 pub fn getSize(self: *MacOSWindow) shared.Size {
     return .{ .width = self.width, .height = self.height };
-}
-
-pub fn needsResize(self: *MacOSWindow) bool {
-    return self.needs_resize;
-}
-
-pub fn getNewSize(self: *MacOSWindow) shared.Size {
-    return .{ .width = self.new_width, .height = self.new_height };
-}
-
-pub fn clearResize(self: *MacOSWindow) void {
-    self.needs_resize = false;
-    self.width = self.new_width;
-    self.height = self.new_height;
-}
-
-pub fn getMousePosition(self: *MacOSWindow) shared.MousePosition {
-    return .{ .x = self.mouse_x, .y = self.mouse_y };
-}
-
-pub fn getMouseButtons(self: *MacOSWindow) u8 {
-    return self.mouse_buttons;
-}
-
-pub fn isKeyPressed(self: *MacOSWindow, key: Key) bool {
-    return self.keys_pressed.contains(key);
-}
-
-pub fn getKeysPressed(self: *MacOSWindow) std.EnumSet(Key) {
-    return self.keys_pressed;
 }

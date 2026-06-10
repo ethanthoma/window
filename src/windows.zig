@@ -1,6 +1,7 @@
 const std = @import("std");
 const shared = @import("shared.zig");
 const Key = @import("key.zig").Key;
+const MouseButton = @import("mouse_button.zig").MouseButton;
 const Window = @import("Window.zig");
 
 const WindowsWindow = @This();
@@ -69,6 +70,10 @@ const WM_LBUTTONDOWN: UINT = 0x0201;
 const WM_LBUTTONUP: UINT = 0x0202;
 const WM_RBUTTONDOWN: UINT = 0x0204;
 const WM_RBUTTONUP: UINT = 0x0205;
+const WM_MBUTTONDOWN: UINT = 0x0207;
+const WM_MBUTTONUP: UINT = 0x0208;
+const WM_MOUSEWHEEL: UINT = 0x020A;
+const WM_MOUSEHWHEEL: UINT = 0x020E;
 
 const IDC_ARROW: LPCSTR = @ptrFromInt(32512);
 const CLASS_NAME: LPCSTR = "ZigGameWindow";
@@ -100,15 +105,6 @@ extern "kernel32" fn GetModuleHandleA(lpModuleName: ?LPCSTR) callconv(.winapi) ?
 
 width: u32,
 height: u32,
-needs_resize: bool = false,
-new_width: u32 = 0,
-new_height: u32 = 0,
-should_close_flag: bool = false,
-
-mouse_x: f32 = 0,
-mouse_y: f32 = 0,
-mouse_buttons: u8 = 0,
-keys_pressed: std.EnumSet(Key) = std.EnumSet(Key).initEmpty(),
 
 hinstance: HINSTANCE,
 hwnd: HWND,
@@ -156,14 +152,10 @@ pub fn init(options: shared.InitOptions) !WindowsWindow {
 
     var rect: RECT = undefined;
     _ = GetClientRect(hwnd, &rect);
-    const client_w: u32 = @intCast(rect.right - rect.left);
-    const client_h: u32 = @intCast(rect.bottom - rect.top);
 
     return .{
-        .width = client_w,
-        .height = client_h,
-        .mouse_x = @as(f32, @floatFromInt(client_w)) / 2.0,
-        .mouse_y = @as(f32, @floatFromInt(client_h)) / 2.0,
+        .width = @intCast(rect.right - rect.left),
+        .height = @intCast(rect.bottom - rect.top),
         .hinstance = hinstance,
         .hwnd = hwnd,
     };
@@ -177,10 +169,6 @@ pub fn deinit(self: *WindowsWindow) void {
 
 pub fn show(self: *WindowsWindow) void {
     _ = ShowWindow(self.hwnd, SW_SHOW);
-}
-
-pub fn shouldClose(self: *WindowsWindow) bool {
-    return self.should_close_flag;
 }
 
 pub fn pollEvents(self: *WindowsWindow, window: *Window) void {
@@ -198,13 +186,30 @@ pub fn pollEvents(self: *WindowsWindow, window: *Window) void {
     }
 }
 
+fn mouseX(lparam: LPARAM) f32 {
+    const lp32: u32 = @truncate(@as(usize, @bitCast(lparam)));
+    const x: i16 = @bitCast(@as(u16, @intCast(lp32 & 0xFFFF)));
+    return @floatFromInt(x);
+}
+
+fn mouseY(lparam: LPARAM) f32 {
+    const lp32: u32 = @truncate(@as(usize, @bitCast(lparam)));
+    const y: i16 = @bitCast(@as(u16, @intCast((lp32 >> 16) & 0xFFFF)));
+    return @floatFromInt(y);
+}
+
+fn wheelDelta(wparam: WPARAM) f32 {
+    const delta: i16 = @bitCast(@as(u16, @intCast((wparam >> 16) & 0xFFFF)));
+    return @as(f32, @floatFromInt(delta)) / 120.0;
+}
+
 fn wndProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.winapi) LRESULT {
     const self = current_backend orelse return DefWindowProcA(hwnd, msg, wparam, lparam);
     const win = current_window orelse return DefWindowProcA(hwnd, msg, wparam, lparam);
 
     switch (msg) {
         WM_CLOSE, WM_DESTROY => {
-            self.should_close_flag = true;
+            win.pushEvent(.close);
             return 0;
         },
         WM_SIZE => {
@@ -212,52 +217,48 @@ fn wndProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.wina
             const new_w: u32 = @max(1, lp32 & 0xFFFF);
             const new_h: u32 = @max(1, (lp32 >> 16) & 0xFFFF);
             if (new_w != self.width or new_h != self.height) {
-                self.new_width = new_w;
-                self.new_height = new_h;
-                self.needs_resize = true;
+                self.width = new_w;
+                self.height = new_h;
+                win.pushEvent(.{ .resize = .{ .width = new_w, .height = new_h } });
             }
             return 0;
         },
         WM_MOUSEMOVE => {
-            const lp32: u32 = @truncate(@as(usize, @bitCast(lparam)));
-            const x: i16 = @bitCast(@as(u16, @intCast(lp32 & 0xFFFF)));
-            const y: i16 = @bitCast(@as(u16, @intCast((lp32 >> 16) & 0xFFFF)));
-            self.mouse_x = @floatFromInt(x);
-            self.mouse_y = @floatFromInt(y);
+            win.pushEvent(.{ .mouse_move = .{ .x = mouseX(lparam), .y = mouseY(lparam) } });
             return 0;
         },
-        WM_LBUTTONDOWN => {
-            self.mouse_buttons |= @intFromEnum(Window.MouseButton.left);
-            win.pushEvent(.{ .mouse_click = .{ .x = self.mouse_x, .y = self.mouse_y, .button = @intFromEnum(Window.MouseButton.left) } });
+        WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP => {
+            const button: MouseButton = switch (msg) {
+                WM_LBUTTONDOWN, WM_LBUTTONUP => .left,
+                WM_RBUTTONDOWN, WM_RBUTTONUP => .right,
+                else => .middle,
+            };
+            const action: Window.Action = switch (msg) {
+                WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN => .press,
+                else => .release,
+            };
+            win.pushEvent(.{ .mouse_button = .{
+                .button = button,
+                .action = action,
+                .x = mouseX(lparam),
+                .y = mouseY(lparam),
+            } });
             return 0;
         },
-        WM_LBUTTONUP => {
-            self.mouse_buttons &= ~@intFromEnum(Window.MouseButton.left);
+        WM_MOUSEWHEEL => {
+            win.pushEvent(.{ .mouse_scroll = .{ .dx = 0, .dy = -wheelDelta(wparam) } });
             return 0;
         },
-        WM_RBUTTONDOWN => {
-            self.mouse_buttons |= @intFromEnum(Window.MouseButton.right);
-            win.pushEvent(.{ .mouse_click = .{ .x = self.mouse_x, .y = self.mouse_y, .button = @intFromEnum(Window.MouseButton.right) } });
-            return 0;
-        },
-        WM_RBUTTONUP => {
-            self.mouse_buttons &= ~@intFromEnum(Window.MouseButton.right);
+        WM_MOUSEHWHEEL => {
+            win.pushEvent(.{ .mouse_scroll = .{ .dx = wheelDelta(wparam), .dy = 0 } });
             return 0;
         },
         WM_KEYDOWN, WM_SYSKEYDOWN => {
-            const key = decodeKey(@intCast(wparam), lparam);
-            if (key != .unknown and !self.keys_pressed.contains(key)) {
-                self.keys_pressed.insert(key);
-                win.pushEvent(.{ .key_press = key });
-            }
+            win.pushEvent(.{ .key = .{ .key = decodeKey(@intCast(wparam), lparam), .action = .press } });
             return 0;
         },
         WM_KEYUP, WM_SYSKEYUP => {
-            const key = decodeKey(@intCast(wparam), lparam);
-            if (key != .unknown) {
-                self.keys_pressed.remove(key);
-                win.pushEvent(.{ .key_release = key });
-            }
+            win.pushEvent(.{ .key = .{ .key = decodeKey(@intCast(wparam), lparam), .action = .release } });
             return 0;
         },
         else => return DefWindowProcA(hwnd, msg, wparam, lparam),
@@ -283,34 +284,4 @@ pub fn getNativeHandles(self: *WindowsWindow) shared.NativeHandles {
 
 pub fn getSize(self: *WindowsWindow) shared.Size {
     return .{ .width = self.width, .height = self.height };
-}
-
-pub fn needsResize(self: *WindowsWindow) bool {
-    return self.needs_resize;
-}
-
-pub fn getNewSize(self: *WindowsWindow) shared.Size {
-    return .{ .width = self.new_width, .height = self.new_height };
-}
-
-pub fn clearResize(self: *WindowsWindow) void {
-    self.needs_resize = false;
-    self.width = self.new_width;
-    self.height = self.new_height;
-}
-
-pub fn getMousePosition(self: *WindowsWindow) shared.MousePosition {
-    return .{ .x = self.mouse_x, .y = self.mouse_y };
-}
-
-pub fn getMouseButtons(self: *WindowsWindow) u8 {
-    return self.mouse_buttons;
-}
-
-pub fn isKeyPressed(self: *WindowsWindow, key: Key) bool {
-    return self.keys_pressed.contains(key);
-}
-
-pub fn getKeysPressed(self: *WindowsWindow) std.EnumSet(Key) {
-    return self.keys_pressed;
 }
