@@ -11,6 +11,9 @@
 !/build.zig
 !/build.zig.zon
 
+# bindings
+!bindings/**/*.odin
+
 # dev env
 !/flake.nix
 !/flake.lock

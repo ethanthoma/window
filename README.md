@@ -15,6 +15,26 @@ platform.
 On Linux the dispatcher in `src/linux.zig` selects Wayland or X11 at runtime
 based on `WAYLAND_DISPLAY` / `DISPLAY`.
 
+## C API
+
+`zig build c-api` produces `zig-out/lib/libwindow.a`, a static library exposing
+the library over a C ABI (one window per process) for non-Zig consumers:
+
+```c
+int  window_init(uint32_t width, uint32_t height, const char *title); // 0 on success
+void window_deinit(void);
+uint32_t window_should_close(void);
+void window_poll_events(void);
+uint32_t window_next_event(CEvent *out);             // 0 when drained
+uint32_t window_native_handles(CNativeHandles *out); // for wgpu/vulkan surfaces
+void window_size(uint32_t *w, uint32_t *h);
+void window_mouse_position(float *x, float *y);
+```
+
+Struct layouts live in `src/c_api.zig`. Event, key, and button enums cross the
+boundary as integers in declaration order — bindings must mirror `src/key.zig`
+and `src/mouse_button.zig`. Ready-made Odin bindings live in `bindings/odin/`.
+
 ## Usage
 
 `build.zig.zon`:

@@ -25,6 +25,32 @@ pub fn build(b: *std.Build) void {
 
     const check = b.addTest(.{ .root_module = window_module });
     b.step("check", "Compile-check the library").dependOn(&check.step);
+
+    const c_api_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/c_api.zig"),
+    });
+
+    if (target.result.os.tag == .linux) {
+        setupLinux(b, c_api_module);
+    }
+
+    if (target.result.os.tag == .macos) {
+        setupMacOS(b, c_api_module);
+    }
+
+    if (target.result.os.tag == .windows) {
+        setupWindows(c_api_module);
+    }
+
+    const c_api_lib = b.addLibrary(.{
+        .name = "window",
+        .linkage = .static,
+        .root_module = c_api_module,
+    });
+    const c_api_step = b.step("c-api", "Build the C ABI static library (zig-out/lib/libwindow.a)");
+    c_api_step.dependOn(&b.addInstallArtifact(c_api_lib, .{}).step);
 }
 
 fn setupWindows(module: *std.Build.Module) void {
